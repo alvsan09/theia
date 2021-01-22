@@ -359,6 +359,9 @@ export class TaskConfigurations implements Disposable {
         if (task.group) {
             customization.group = task.group;
         }
+
+        customization.label = `${task.source || task._source}: ${task.label}`;
+
         return { ...customization };
     }
 
