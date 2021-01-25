@@ -360,7 +360,7 @@ export class TaskConfigurations implements Disposable {
             customization.group = task.group;
         }
 
-        customization.label = `${task.source || task._source}: ${task.label}`;
+        customization.label = task.label;
 
         return { ...customization };
     }

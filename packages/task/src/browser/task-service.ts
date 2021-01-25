@@ -1105,6 +1105,8 @@ export class TaskService implements TaskConfigurationClient {
      * @param task The task to configure
      */
     async configure(token: number, task: TaskConfiguration): Promise<void> {
+        const label = {label: this.taskNameResolver.resolve(task)};
+        Object.assign(task, label);
         await this.taskConfigurations.configure(token, task);
     }
 
