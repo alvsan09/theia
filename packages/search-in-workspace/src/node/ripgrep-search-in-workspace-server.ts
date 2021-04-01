@@ -20,6 +20,11 @@ import { FileUri } from '@theia/core/lib/node/file-uri';
 import URI from '@theia/core/lib/common/uri';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { SearchInWorkspaceServer, SearchInWorkspaceOptions, SearchInWorkspaceResult, SearchInWorkspaceClient, LinePreview } from '../common/search-in-workspace-interface';
+import * as fs from '@theia/core/shared/fs-extra';
+import path = require('path');
+
+const pathToGlobPattern = require('path-to-glob-pattern');
+const isGlob = require('is-glob');
 
 export const RgPath = Symbol('RgPath');
 
@@ -84,6 +89,9 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
     @inject(RgPath)
     protected readonly rgPath: string;
 
+    private static readonly GLOB_SUB_DIRECTORY_PATTERN = '**/';
+    private static readonly GLOB_COMMAND_ARGUMENT = '--glob=';
+
     constructor(
         @inject(ILogger) protected readonly logger: ILogger,
         @inject(RawProcessFactory) protected readonly rawProcessFactory: RawProcessFactory,
@@ -93,39 +101,77 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         this.client = client;
     }
 
-    protected getArgs(options?: SearchInWorkspaceOptions): string[] {
-        const args = ['--hidden', '--json'];
-        args.push(options && options.matchCase ? '--case-sensitive' : '--ignore-case');
+    protected getArgs(rootPaths: string[], options?: SearchInWorkspaceOptions): string[] {
+        const args = new Set<string>();
+
+        const appendGlobArgs = (rawPatterns: string[], exclude: boolean) => {
+            rootPaths.forEach(root => {
+                for (const rawPattern of rawPatterns) {
+                    if (rawPattern !== '') {
+                        const globArguments = this.pathToGlobs(rawPattern, root, exclude);
+                        globArguments.forEach(arg => args.add(arg));
+                    }
+                }
+            });
+        };
+
+        args.add('--hidden');
+        args.add('--json');
+
+        args.add(options && options.matchCase ? '--case-sensitive' : '--ignore-case');
         if (options && options.includeIgnored) {
-            args.push('--no-ignore');
+            args.add('--no-ignore');
         }
         if (options && options.maxFileSize) {
-            args.push('--max-filesize=' + options.maxFileSize.trim());
+            args.add('--max-filesize=' + options.maxFileSize.trim());
         } else {
-            args.push('--max-filesize=20M');
+            args.add('--max-filesize=20M');
         }
+
         if (options && options.include) {
-            for (const include of options.include) {
-                if (include !== '') {
-                    args.push('--glob=**/' + include);
-                }
-            }
+            appendGlobArgs(options.include, false);
         }
+
         if (options && options.exclude) {
-            for (const exclude of options.exclude) {
-                if (exclude !== '') {
-                    args.push('--glob=!**/' + exclude);
-                }
-            }
+            appendGlobArgs(options.exclude, true);
         }
+
         if (options && options.useRegExp || options && options.matchWholeWord) {
-            args.push('--regexp');
+            args.add('--regexp');
         } else {
-            args.push('--fixed-strings');
-            args.push('--');
+            args.add('--fixed-strings');
+            args.add('--');
         }
-        return args;
+
+        return Array.from(args);
     }
+
+    protected pathToGlobs(inputPath: string, rootFolder: string, exclude: boolean): string[] {
+        const prefixPattern = (inputPattern: string): string => {
+            const excludeChar = exclude ? '!' : '';
+            const updatedPattern = inputPattern.startsWith(RipgrepSearchInWorkspaceServer.GLOB_SUB_DIRECTORY_PATTERN) ?
+                inputPattern : `${RipgrepSearchInWorkspaceServer.GLOB_SUB_DIRECTORY_PATTERN}${inputPattern}`;
+
+            return `${RipgrepSearchInWorkspaceServer.GLOB_COMMAND_ARGUMENT}${excludeChar}${updatedPattern}`;
+        };
+
+        const toGlobPattern = pathToGlobPattern({
+            extensions: [],
+            cwd: rootFolder
+        });
+
+        const pattern = isGlob(inputPath) ? inputPath : toGlobPattern(inputPath);
+        const prefixedPattern = prefixPattern(pattern);
+
+        const globs = [prefixedPattern];
+        if (pattern === inputPath && !prefixedPattern.endsWith('*')) {
+            // The pattern did not directly resolve to a glob for a file or folder at the base of 'path'.
+            // Add a generic glob entry to include files inside a given directory.
+            globs.push(`${prefixedPattern}/*`);
+        }
+
+        return globs;
+    };
 
     // Search for the string WHAT in directories ROOTURIS.  Return the assigned search id.
     search(what: string, rootUris: string[], opts?: SearchInWorkspaceOptions): Promise<number> {
@@ -133,7 +179,9 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         // line, --color=always to get color control characters that
         // we'll use to parse the lines.
         const searchId = this.nextSearchId++;
-        const rgArgs = this.getArgs(opts);
+        const rootPaths = rootUris.map(root => FileUri.fsPath(root));
+        const rgArgs = this.getArgs(rootPaths, opts);
+        const searchPaths: string[] = this.resolveSearchPaths(rootPaths, opts);
         // if we use matchWholeWord we use regExp internally,
         // so, we need to escape regexp characters if we actually not set regexp true in UI.
         if (opts && opts.matchWholeWord && !opts.useRegExp) {
@@ -146,7 +194,7 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
             }
         }
 
-        const args = [...rgArgs, what].concat(rootUris.map(root => FileUri.fsPath(root)));
+        const args = [...rgArgs, what].concat(searchPaths);
         const processOptions: RawProcessOptions = {
             command: this.rgPath,
             args
@@ -288,6 +336,24 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         });
 
         return Promise.resolve(searchId);
+    }
+
+    protected resolveSearchPaths(rootPaths: string[], opts: SearchInWorkspaceOptions | undefined): string[] {
+        if (!opts || !opts.include) {
+            return rootPaths;
+        }
+
+        const searchPaths: string[] = [];
+        opts.include.forEach(pattern => {
+            rootPaths.forEach(root => {
+                const searchPath = path.join(root, pattern);
+                if (fs.existsSync(searchPath)) {
+                    searchPaths.push(searchPath);
+                }
+            });
+        });
+
+        return searchPaths.length > 0 ? searchPaths : rootPaths;
     }
 
     /**

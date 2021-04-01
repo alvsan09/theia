@@ -89,7 +89,11 @@ const getRootPathFromName = (name: string) => {
         glob: rootDirA,
         'lots-of-matches': rootDirA,
         orange: rootDirB,
-        folderSubfolder: rootSubdirA
+        folderSubfolder: rootSubdirA,
+        'orange/navel': `${rootDirA}`,
+        'orange/hamlin': `${rootDirA}`,
+        'test/test-spec.ts': `${rootDirA}`,
+        'small/test/test-spec.ts': `${rootDirA}`
     };
     return names[name];
 };
@@ -128,8 +132,24 @@ aaa hello. x h3lo y hell0h3lllo
 hello1
 `);
 
-    fs.mkdirSync(rootDirA + '/small');
+    const smallDirPath = rootDirA + '/small';
+    fs.mkdirSync(smallDirPath);
     createTestFile('small', 'A small file.\n');
+
+    const copyrightLine = '\
+    Copyright (C) 2021 <Company> and others.';
+    fs.mkdirSync(smallDirPath + '/test');
+    createTestFile('small/test/test-spec.ts', copyrightLine);
+
+    fs.mkdirSync(rootDirA + '/test');
+    createTestFile('test/test-spec.ts', copyrightLine);
+
+    fs.mkdirSync(rootDirA + '/orange');
+    createTestFile('orange/hamlin', '\
+    Hamlin orange is one of our most cold-hardy sweet oranges. Grown since 1885');
+
+    createTestFile('orange/navel', '\
+    Most well known orange type');
 
     if (!isWindows) {
         createTestFile('file:with:some:colons', `\
@@ -679,6 +699,68 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         });
         ripgrepServer.setClient(client);
         ripgrepServer.search(pattern, [rootDirAUri], { include: ['*.txt'], matchWholeWord: true });
+    });
+
+    it('should search in a given file by relative path', done => {
+        const pattern = 'carrots';
+
+        const client = new ResultAccumulator(() => {
+            const expected: SearchInWorkspaceExpectation[] = [
+                { root: rootDirAUri, fileUri: 'potatoes', line: 1, character: 18, length: pattern.length, lineText: '' }
+            ];
+
+            compareSearchResults(expected, client.results);
+            done();
+        });
+        ripgrepServer.setClient(client);
+        ripgrepServer.search(pattern, [rootDirAUri], { include: ['./potatoes'], matchWholeWord: true });
+    });
+
+    it('should only apply to sub-folders of given include', done => {
+        const pattern = 'Copyright';
+
+        const client = new ResultAccumulator(() => {
+            const expected: SearchInWorkspaceExpectation[] = [
+                { root: rootDirAUri, fileUri: 'test/test-spec.ts', line: 1, character: 5, length: pattern.length, lineText: '' }
+            ];
+
+            compareSearchResults(expected, client.results);
+            done();
+        });
+        ripgrepServer.setClient(client);
+        // Matching only the top 'test' folder and not any other 'test' subfolder
+        ripgrepServer.search(pattern, [rootDirAUri], { include: ['test'], matchWholeWord: true });
+    });
+
+    it('should consider "include" string as a file', done => {
+        const pattern = 'slightly';
+
+        const client = new ResultAccumulator(() => {
+            const expected: SearchInWorkspaceExpectation[] = [
+                { root: rootDirAUri, fileUri: 'orange', line: 1, character: 27, length: pattern.length, lineText: '' }
+            ];
+
+            compareSearchResults(expected, client.results);
+            done();
+        });
+        ripgrepServer.setClient(client);
+        ripgrepServer.search(pattern, [rootDirBUri], { include: ['orange'], matchWholeWord: true });
+    });
+
+    it('should consider "include" string as a folder', done => {
+        const pattern = 'Most';
+
+        const client = new ResultAccumulator(() => {
+            const expected: SearchInWorkspaceExpectation[] = [
+                { root: rootDirAUri, fileUri: 'orange/navel', line: 1, character: 5, length: pattern.length, lineText: '' },
+                { root: rootDirAUri, fileUri: 'orange/hamlin', line: 1, character: 33, length: pattern.length, lineText: '' }
+            ];
+
+            compareSearchResults(expected, client.results);
+            done();
+        });
+        ripgrepServer.setClient(client);
+        ripgrepServer.search(pattern, [rootDirAUri], { include: ['orange'], matchWholeWord: true });
     });
 
     it('should return 1 result when searching for "test" while ignoring all ".txt" files', done => {
