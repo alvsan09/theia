@@ -89,9 +89,6 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
     @inject(RgPath)
     protected readonly rgPath: string;
 
-    private static readonly GLOB_SUB_DIRECTORY_PATTERN = '**/';
-    private static readonly GLOB_COMMAND_ARGUMENT = '--glob=';
-
     constructor(
         @inject(ILogger) protected readonly logger: ILogger,
         @inject(RawProcessFactory) protected readonly rawProcessFactory: RawProcessFactory,
@@ -148,11 +145,15 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
 
     protected pathToGlobs(inputPath: string, rootFolder: string, exclude: boolean): string[] {
         const prefixPattern = (inputPattern: string): string => {
+            const globalCommandArgument = '--glob=';
             const excludeChar = exclude ? '!' : '';
-            const updatedPattern = inputPattern.startsWith(RipgrepSearchInWorkspaceServer.GLOB_SUB_DIRECTORY_PATTERN) ?
-                inputPattern : `${RipgrepSearchInWorkspaceServer.GLOB_SUB_DIRECTORY_PATTERN}${inputPattern}`;
+            const subDirGlobPattern = '**/';
 
-            return `${RipgrepSearchInWorkspaceServer.GLOB_COMMAND_ARGUMENT}${excludeChar}${updatedPattern}`;
+            const subDirGlobPrefix = inputPattern.startsWith('/') ? '**' : subDirGlobPattern;
+            const updatedPattern = inputPattern.startsWith(subDirGlobPattern) ?
+                inputPattern : `${subDirGlobPrefix}${inputPattern}`;
+
+            return `${globalCommandArgument}${excludeChar}${updatedPattern}`;
         };
 
         const toGlobPattern = pathToGlobPattern({
@@ -180,8 +181,8 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         // we'll use to parse the lines.
         const searchId = this.nextSearchId++;
         const rootPaths = rootUris.map(root => FileUri.fsPath(root));
-        const rgArgs = this.getArgs(rootPaths, opts);
         const searchPaths: string[] = this.resolveSearchPaths(rootPaths, opts);
+        const rgArgs = this.getArgs(searchPaths, opts);
         // if we use matchWholeWord we use regExp internally,
         // so, we need to escape regexp characters if we actually not set regexp true in UI.
         if (opts && opts.matchWholeWord && !opts.useRegExp) {
@@ -344,16 +345,48 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         }
 
         const searchPaths: string[] = [];
+        const patternPaths: string[] = [];
         opts.include.forEach(pattern => {
             rootPaths.forEach(root => {
-                const searchPath = path.join(root, pattern);
+                let searchPath = path.join(root, pattern);
+                let isPatternAValidPath = false;
                 if (fs.existsSync(searchPath)) {
+                    isPatternAValidPath = true;
+                } else if (fs.existsSync(pattern)) {
+                    searchPath = pattern;
+                    isPatternAValidPath = true;
+                } else if (pattern.endsWith('**')) {
+                    const patternPath = this.includeSubDirectoriesToPath(pattern);
+                    if (fs.existsSync(patternPath)) {
+                        searchPath = patternPath;
+                        isPatternAValidPath = true;
+                    }
+                }
+
+                if (isPatternAValidPath) {
                     searchPaths.push(searchPath);
+                    patternPaths.push(pattern);
                 }
             });
         });
 
+        // Exclude include file patters that were successfully translated to search paths
+        opts.include = opts.include.filter(item => !patternPaths.includes(item));
         return searchPaths.length > 0 ? searchPaths : rootPaths;
+    }
+
+    protected includeSubDirectoriesToPath(pattern: string): string {
+        const parsedObj = path.parse(pattern);
+
+        let resultingPath = pattern;
+        if (parsedObj.base === '**') {
+            parsedObj.base = '';
+            parsedObj.name = '';
+            const transformed = resultingPath = path.format(parsedObj);
+            resultingPath = transformed.endsWith(path.sep) ? transformed.slice(0, -1) : transformed;
+        }
+
+        return resultingPath;
     }
 
     /**
