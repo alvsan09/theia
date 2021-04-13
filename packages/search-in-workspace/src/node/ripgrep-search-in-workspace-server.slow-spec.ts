@@ -930,3 +930,124 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         }
     });
 });
+
+describe('ripgrep-search-in-workspace-server-matchPatternToPathResult', function (): void {
+    this.timeout(10000);
+    it('Resolve pattern to path for filename', function (): void {
+        const pattern = 'carrots';
+        matchPatternToPathResult(pattern, path.join(rootDirA, pattern));
+    });
+
+    it('Resolve pattern to path for relative filename', function (): void {
+        const filename = 'carrots';
+        const pattern = `./${filename}`;
+        matchPatternToPathResult(pattern, path.join(rootDirA, filename));
+    });
+
+    it('Resolve relative pattern with sub-folders glob', function (): void {
+        const filename = 'carrots';
+        const pattern = `./${filename}/**`;
+        matchPatternToPathResult(pattern, path.join(rootDirA, filename));
+    });
+
+    it('Resolve absolute path pattern', function (): void {
+        const pattern = `${rootDirA}/carrots`;
+        matchPatternToPathResult(pattern, pattern);
+    });
+});
+
+describe('ripgrep-search-in-workspace-server-filePatternToGlobs', function (): void {
+    this.timeout(10000);
+
+    it('Resolve path to glob - filename', function (): void {
+        [true, false].forEach(excludeFlag => {
+            const excludePrefix = excludeFlag ? '!' : '';
+            const filename = 'carrots';
+            const expected = [
+                `--glob=${excludePrefix}**/${filename}`,
+                `--glob=${excludePrefix}**/${filename}/*`
+            ];
+
+            const actual = ripgrepServer.filePatternToGlobs(filename, rootDirA, excludeFlag);
+            matchArrays(expected, actual);
+        });
+    });
+
+    it('Resolve path to glob - glob prefixed folder', function (): void {
+        [true, false].forEach(excludeFlag => {
+            const excludePrefix = excludeFlag ? '!' : '';
+            const filename = 'carrots';
+            const inputPath = `**/${filename}/`;
+            const expected = [
+                `--glob=${excludePrefix}**/${filename}/`,
+                `--glob=${excludePrefix}**/${filename}/*`
+            ];
+
+            const actual = ripgrepServer.filePatternToGlobs(inputPath, rootDirA, excludeFlag);
+            matchArrays(expected, actual);
+        });
+    });
+
+    it('Resolve path to glob - path segment', function (): void {
+        [true, false].forEach(excludeFlag => {
+            const excludePrefix = excludeFlag ? '!' : '';
+            const filename = 'carrots';
+            const inputPath = `/${filename}`;
+            const expected = [
+                `--glob=${excludePrefix}**/${filename}`,
+                `--glob=${excludePrefix}**/${filename}/*`
+            ];
+
+            const actual = ripgrepServer.filePatternToGlobs(inputPath, rootDirA, excludeFlag);
+            matchArrays(expected, actual);
+        });
+    });
+
+    it('Resolve path to glob - already a glob', function (): void {
+        [true, false].forEach(excludeFlag => {
+            const excludePrefix = excludeFlag ? '!' : '';
+            const filename = 'carrots';
+            const inputPath = `${filename}/**/*`;
+            const expected = [
+                `--glob=${excludePrefix}**/${filename}/**/*`,
+            ];
+
+            const actual = ripgrepServer.filePatternToGlobs(inputPath, rootDirA, excludeFlag);
+            matchArrays(expected, actual);
+        });
+    });
+
+    it('Resolve path to glob - path segment glob suffixed', function (): void {
+        [true, false].forEach(excludeFlag => {
+            const excludePrefix = excludeFlag ? '!' : '';
+            const filename = 'carrots';
+            const inputPath = `/${filename}/**/*`;
+            const expected = [
+                `--glob=${excludePrefix}**/${filename}/**/*`,
+            ];
+
+            const actual = ripgrepServer.filePatternToGlobs(inputPath, rootDirA, excludeFlag);
+            matchArrays(expected, actual);
+        });
+    });
+});
+
+function matchArrays(expected: string[], actual: string[]): Boolean {
+    if (expected.length !== actual.length) {
+        return false;
+    }
+
+    for (const e of expected) {
+        if (!actual.includes(e)) {
+            expect(actual).includes(e);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function matchPatternToPathResult(pattern: string, expectedPath: string): void {
+    const resultMap: Map<string, string> = ripgrepServer.resolvePatternToPathMap([pattern], [rootDirA]);
+    expect(resultMap.get(pattern)).equal(expectedPath);
+}
