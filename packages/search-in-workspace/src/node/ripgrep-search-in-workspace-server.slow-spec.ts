@@ -968,8 +968,8 @@ describe('ripgrep-search-in-workspace-server-filePatternToGlobs', function (): v
                 `--glob=${excludePrefix}**/${filename}/*`
             ];
 
-            const actual = ripgrepServer.filePatternToGlobs(filename, rootDirA, excludeFlag);
-            matchArrays(expected, actual);
+            const actual = ripgrepServer['filePatternToGlobs'](filename, rootDirA, excludeFlag);
+            expect(expected).to.have.deep.members(actual);
         });
     });
 
@@ -983,8 +983,8 @@ describe('ripgrep-search-in-workspace-server-filePatternToGlobs', function (): v
                 `--glob=${excludePrefix}**/${filename}/*`
             ];
 
-            const actual = ripgrepServer.filePatternToGlobs(inputPath, rootDirA, excludeFlag);
-            matchArrays(expected, actual);
+            const actual = ripgrepServer['filePatternToGlobs'](inputPath, rootDirA, excludeFlag);
+            expect(expected).to.have.deep.members(actual);
         });
     });
 
@@ -998,8 +998,8 @@ describe('ripgrep-search-in-workspace-server-filePatternToGlobs', function (): v
                 `--glob=${excludePrefix}**/${filename}/*`
             ];
 
-            const actual = ripgrepServer.filePatternToGlobs(inputPath, rootDirA, excludeFlag);
-            matchArrays(expected, actual);
+            const actual = ripgrepServer['filePatternToGlobs'](inputPath, rootDirA, excludeFlag);
+            expect(expected).to.have.deep.members(actual);
         });
     });
 
@@ -1012,8 +1012,8 @@ describe('ripgrep-search-in-workspace-server-filePatternToGlobs', function (): v
                 `--glob=${excludePrefix}**/${filename}/**/*`,
             ];
 
-            const actual = ripgrepServer.filePatternToGlobs(inputPath, rootDirA, excludeFlag);
-            matchArrays(expected, actual);
+            const actual = ripgrepServer['filePatternToGlobs'](inputPath, rootDirA, excludeFlag);
+            expect(expected).to.have.deep.members(actual);
         });
     });
 
@@ -1026,28 +1026,13 @@ describe('ripgrep-search-in-workspace-server-filePatternToGlobs', function (): v
                 `--glob=${excludePrefix}**/${filename}/**/*`,
             ];
 
-            const actual = ripgrepServer.filePatternToGlobs(inputPath, rootDirA, excludeFlag);
-            matchArrays(expected, actual);
+            const actual = ripgrepServer['filePatternToGlobs'](inputPath, rootDirA, excludeFlag);
+            expect(expected).to.have.deep.members(actual);
         });
     });
 });
 
-function matchArrays(expected: string[], actual: string[]): Boolean {
-    if (expected.length !== actual.length) {
-        return false;
-    }
-
-    for (const e of expected) {
-        if (!actual.includes(e)) {
-            expect(actual).includes(e);
-            return false;
-        }
-    }
-
-    return true;
-}
-
 function matchPatternToPathResult(pattern: string, expectedPath: string): void {
-    const resultMap: Map<string, string> = ripgrepServer.resolvePatternToPathMap([pattern], [rootDirA]);
+    const resultMap: Map<string, string> = ripgrepServer['resolvePatternToPathMap']([pattern], [rootDirA]);
     expect(resultMap.get(pattern)).equal(expectedPath);
 }

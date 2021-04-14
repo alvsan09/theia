@@ -23,9 +23,6 @@ import { SearchInWorkspaceServer, SearchInWorkspaceOptions, SearchInWorkspaceRes
 import * as fs from '@theia/core/shared/fs-extra';
 import * as path from 'path';
 
-const pathToGlobPattern = require('path-to-glob-pattern');
-const isGlob = require('is-glob');
-
 export const RgPath = Symbol('RgPath');
 
 /**
@@ -212,7 +209,7 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
      * @param rootFolder
      * @param exclude
      */
-    filePatternToGlobs(rawPattern: string, rootFolder: string, exclude: boolean): string[] {
+    protected filePatternToGlobs(pattern: string, rootFolder: string, exclude: boolean): string[] {
         const prefixPattern = (inputPattern: string): string => {
             const globCommandArgument = '--glob=';
             const excludeChar = exclude ? '!' : '';
@@ -225,18 +222,10 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
             return `${globCommandArgument}${excludeChar}${updatedPattern}`;
         };
 
-        const pattern = isGlob(rawPattern)
-            ? rawPattern
-            : pathToGlobPattern({
-                extensions: [],
-                cwd: rootFolder
-            })(rawPattern);
-
         const prefixedPattern = prefixPattern(pattern);
 
         const globs = [prefixedPattern];
-        if (pattern === rawPattern && !prefixedPattern.endsWith('*')) {
-            // The pattern did not directly resolve to a glob for a file or folder.
+        if (!prefixedPattern.endsWith('*')) {
             // Add a generic glob entry to include files inside a given directory.
             const suffix = prefixedPattern.endsWith('/') ? '*' : '/*';
             globs.push(`${prefixedPattern}${suffix}`);
@@ -468,7 +457,7 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
      * @param rootPaths
      * @param patterns
      */
-    resolvePatternToPathMap(patterns: string[], rootPaths: string[], keepSuffix: boolean = false): Map<string, string> {
+    protected resolvePatternToPathMap(patterns: string[], rootPaths: string[], keepSuffix: boolean = false): Map<string, string> {
         const patternToPathMap = new Map<string, string>();
 
         patterns.forEach(pattern => {
