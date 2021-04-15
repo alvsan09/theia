@@ -234,7 +234,22 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         return globs;
     };
 
-    // Search for the string WHAT in directories ROOTURIS.  Return the assigned search id.
+    /**
+     * By default, sets the search directories for the string WHAT to the provided ROOTURIS directories
+     * and returns the assigned search id.
+     *
+     * The include / exclude (options in SearchInWorkspaceOptions) are lists of patterns for files to
+     * include / exclude during search (glob characters are allowed).
+     *
+     * include patterns successfully recognized as absolute paths will override the default search and set
+     * the search directories to the ones provided as includes.
+     * Relative paths are allowed, the application will attempt to translate them to valid absolute paths
+     * based on the applicable search directories.
+     *
+     * @param what
+     * @param rootUris
+     * @param opts
+     */
     search(what: string, rootUris: string[], opts?: SearchInWorkspaceOptions): Promise<number> {
         // Start the rg process.  Use --vimgrep to get one result per
         // line, --color=always to get color control characters that
