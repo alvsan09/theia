@@ -931,35 +931,35 @@ describe('ripgrep-search-in-workspace-server', function (): void {
     });
 });
 
-describe('ripgrep-search-in-workspace-server-matchPatternToPathResult', function (): void {
+describe('#resolvePatternToPathMap', function (): void {
     this.timeout(10000);
-    it('Resolve pattern to path for filename', function (): void {
+    it('should resolve pattern to path for filename', function (): void {
         const pattern = 'carrots';
-        matchPatternToPathResult(pattern, path.join(rootDirA, pattern));
+        checkResolvedPathForPattern(pattern, path.join(rootDirA, pattern));
     });
 
-    it('Resolve pattern to path for relative filename', function (): void {
+    it('should resolve pattern to path for relative filename', function (): void {
         const filename = 'carrots';
         const pattern = `./${filename}`;
-        matchPatternToPathResult(pattern, path.join(rootDirA, filename));
+        checkResolvedPathForPattern(pattern, path.join(rootDirA, filename));
     });
 
-    it('Resolve relative pattern with sub-folders glob', function (): void {
+    it('should resolve relative pattern with sub-folders glob', function (): void {
         const filename = 'carrots';
         const pattern = `./${filename}/**`;
-        matchPatternToPathResult(pattern, path.join(rootDirA, filename));
+        checkResolvedPathForPattern(pattern, path.join(rootDirA, filename));
     });
 
-    it('Resolve absolute path pattern', function (): void {
+    it('should resolve absolute path pattern', function (): void {
         const pattern = `${rootDirA}/carrots`;
-        matchPatternToPathResult(pattern, pattern);
+        checkResolvedPathForPattern(pattern, pattern);
     });
 });
 
-describe('ripgrep-search-in-workspace-server-filePatternToGlobs', function (): void {
+describe('#patternToGlobCLIArguments', function (): void {
     this.timeout(10000);
 
-    it('Resolve path to glob - filename', function (): void {
+    it('should resolve path to glob - filename', function (): void {
         [true, false].forEach(excludeFlag => {
             const excludePrefix = excludeFlag ? '!' : '';
             const filename = 'carrots';
@@ -968,12 +968,12 @@ describe('ripgrep-search-in-workspace-server-filePatternToGlobs', function (): v
                 `--glob=${excludePrefix}**/${filename}/*`
             ];
 
-            const actual = ripgrepServer['filePatternToGlobs'](filename, rootDirA, excludeFlag);
+            const actual = ripgrepServer['patternToGlobCLIArguments'](filename, excludeFlag);
             expect(expected).to.have.deep.members(actual);
         });
     });
 
-    it('Resolve path to glob - glob prefixed folder', function (): void {
+    it('should resolve path to glob - glob prefixed folder', function (): void {
         [true, false].forEach(excludeFlag => {
             const excludePrefix = excludeFlag ? '!' : '';
             const filename = 'carrots';
@@ -983,12 +983,12 @@ describe('ripgrep-search-in-workspace-server-filePatternToGlobs', function (): v
                 `--glob=${excludePrefix}**/${filename}/*`
             ];
 
-            const actual = ripgrepServer['filePatternToGlobs'](inputPath, rootDirA, excludeFlag);
+            const actual = ripgrepServer['patternToGlobCLIArguments'](inputPath, excludeFlag);
             expect(expected).to.have.deep.members(actual);
         });
     });
 
-    it('Resolve path to glob - path segment', function (): void {
+    it('should resolve path to glob - path segment', function (): void {
         [true, false].forEach(excludeFlag => {
             const excludePrefix = excludeFlag ? '!' : '';
             const filename = 'carrots';
@@ -998,12 +998,12 @@ describe('ripgrep-search-in-workspace-server-filePatternToGlobs', function (): v
                 `--glob=${excludePrefix}**/${filename}/*`
             ];
 
-            const actual = ripgrepServer['filePatternToGlobs'](inputPath, rootDirA, excludeFlag);
+            const actual = ripgrepServer['patternToGlobCLIArguments'](inputPath, excludeFlag);
             expect(expected).to.have.deep.members(actual);
         });
     });
 
-    it('Resolve path to glob - already a glob', function (): void {
+    it('should resolve path to glob - already a glob', function (): void {
         [true, false].forEach(excludeFlag => {
             const excludePrefix = excludeFlag ? '!' : '';
             const filename = 'carrots';
@@ -1012,12 +1012,12 @@ describe('ripgrep-search-in-workspace-server-filePatternToGlobs', function (): v
                 `--glob=${excludePrefix}**/${filename}/**/*`,
             ];
 
-            const actual = ripgrepServer['filePatternToGlobs'](inputPath, rootDirA, excludeFlag);
+            const actual = ripgrepServer['patternToGlobCLIArguments'](inputPath, excludeFlag);
             expect(expected).to.have.deep.members(actual);
         });
     });
 
-    it('Resolve path to glob - path segment glob suffixed', function (): void {
+    it('should resolve path to glob - path segment glob suffixed', function (): void {
         [true, false].forEach(excludeFlag => {
             const excludePrefix = excludeFlag ? '!' : '';
             const filename = 'carrots';
@@ -1026,13 +1026,13 @@ describe('ripgrep-search-in-workspace-server-filePatternToGlobs', function (): v
                 `--glob=${excludePrefix}**/${filename}/**/*`,
             ];
 
-            const actual = ripgrepServer['filePatternToGlobs'](inputPath, rootDirA, excludeFlag);
+            const actual = ripgrepServer['patternToGlobCLIArguments'](inputPath, excludeFlag);
             expect(expected).to.have.deep.members(actual);
         });
     });
 });
 
-function matchPatternToPathResult(pattern: string, expectedPath: string): void {
-    const resultMap: Map<string, string> = ripgrepServer['resolvePatternToPathMap']([pattern], [rootDirA]);
-    expect(resultMap.get(pattern)).equal(expectedPath);
+function checkResolvedPathForPattern(pattern: string, expectedPath: string): void {
+    const resultMap: Map<string, string[]> = ripgrepServer['resolvePatternToPathsMap']([pattern], [rootDirA]);
+    expect(resultMap.get(pattern)![0]).equal(expectedPath);
 }

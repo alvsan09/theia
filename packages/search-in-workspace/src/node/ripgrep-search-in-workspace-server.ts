@@ -39,14 +39,10 @@ function bytesOrTextToString(obj: IRgBytesOrText): string {
 }
 
 /**
- * Attempts to build an validate an absolute path from a given pattern an a root folder
+ * Attempts to build an validate an absolute path from a given pattern and a root folder
  * If a first pass is not successful a second pass will consider finding it by removing
  * a glob suffix '/**', if a valid path is successfully built the suffix can be appended
  * back to the result string i.e. depending on the keepSuffix flag.
- *
- * @param root
- * @param pattern
- * @param keepSuffix
  */
 function findPathInSuffixedPattern(root: string, pattern: string, keepSuffix: boolean): string | undefined {
     let suffix = undefined;
@@ -56,7 +52,7 @@ function findPathInSuffixedPattern(root: string, pattern: string, keepSuffix: bo
         return searchPath;
     }
 
-    // Attempt to find a path in provided pattern but without a glob suffix
+    // Attempt to find a path in provided pattern but without a glob suffix.
     let patternBase = undefined;
     ({ patternBase, suffix } = stripPatternGlobSuffix(pattern));
     if (suffix) {
@@ -83,7 +79,6 @@ function findPathInPattern(root: string, pattern: string): string | undefined {
  * Returns the original pattern if not successful.
  *
  * Returns the pattern with out the glob stars prefix '/**' or without '\\**'
- * @param pattern
  */
 function stripPatternGlobSuffix(pattern: string): { patternBase: string, suffix: string | undefined } {
     let patternBase: string = pattern;
@@ -160,12 +155,10 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         const args = new Set<string>();
 
         const appendGlobArgs = (rawPatterns: string[], exclude: boolean) => {
-            rootPaths.forEach(root => {
-                for (const rawPattern of rawPatterns) {
-                    if (rawPattern !== '') {
-                        const globArguments = this.filePatternToGlobs(rawPattern, root, exclude);
-                        globArguments.forEach(arg => args.add(arg));
-                    }
+            rawPatterns.forEach(rawPattern => {
+                if (rawPattern !== '') {
+                    const globArguments = this.patternToGlobCLIArguments(rawPattern, exclude);
+                    globArguments.forEach(arg => args.add(arg));
                 }
             });
         };
@@ -202,15 +195,10 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
     }
 
     /**
-     * Transforms a file pattern to a glob pattern (unless it's already a glob).
-     * It then creates corresponding 'ripgrep' CLI parameters,
-     *
-     * @param rawPattern
-     * @param rootFolder
-     * @param exclude
+     * Transforms a given file pattern to 'ripgrep' glob CLI arguments.
      */
-    protected filePatternToGlobs(pattern: string, rootFolder: string, exclude: boolean): string[] {
-        const prefixPattern = (inputPattern: string): string => {
+    protected patternToGlobCLIArguments(pattern: string, exclude: boolean): string[] {
+        const toCLIGlobArgument = (inputPattern: string): string => {
             const globCommandArgument = '--glob=';
             const excludeChar = exclude ? '!' : '';
             const subDirGlobPattern = '**/';
@@ -222,16 +210,16 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
             return `${globCommandArgument}${excludeChar}${updatedPattern}`;
         };
 
-        const prefixedPattern = prefixPattern(pattern);
+        const globArgument = toCLIGlobArgument(pattern);
 
-        const globs = [prefixedPattern];
-        if (!prefixedPattern.endsWith('*')) {
-            // Add a generic glob entry to include files inside a given directory.
-            const suffix = prefixedPattern.endsWith('/') ? '*' : '/*';
-            globs.push(`${prefixedPattern}${suffix}`);
+        const globArgumentsArray = [globArgument];
+        if (!globArgument.endsWith('*')) {
+            // Add a generic glob CLI argument entry to include files inside a given directory.
+            const suffix = globArgument.endsWith('/') ? '*' : '/*';
+            globArgumentsArray.push(`${globArgument}${suffix}`);
         }
 
-        return globs;
+        return globArgumentsArray;
     };
 
     /**
@@ -245,10 +233,6 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
      * the search directories to the ones provided as includes.
      * Relative paths are allowed, the application will attempt to translate them to valid absolute paths
      * based on the applicable search directories.
-     *
-     * @param what
-     * @param rootUris
-     * @param opts
      */
     search(what: string, rootUris: string[], opts?: SearchInWorkspaceOptions): Promise<number> {
         // Start the rg process.  Use --vimgrep to get one result per
@@ -271,7 +255,7 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
             }
         }
 
-        const args = [...rgArgs, what].concat(searchPaths);
+        const args = [...rgArgs, what, ...searchPaths];
         const processOptions: RawProcessOptions = {
             command: this.rgPath,
             args
@@ -418,19 +402,18 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
     /**
      * Transform exclude option patterns from relative paths to absolute paths as long
      * as the resulting paths get validated.
-     *
-     * @param opts
      */
     protected adjustExcludePaths(rootPaths: string[], opts: SearchInWorkspaceOptions | undefined): void {
         if (!opts || !opts.exclude) {
             return;
         }
 
-        const patternToPathMap: Map<string, string> = this.resolvePatternToPathMap(opts.exclude, rootPaths, true);
+        const patternToPathsMap: Map<string, string[]> = this.resolvePatternToPathsMap(opts.exclude, rootPaths, true);
         const updatedExcludes: string[] = [];
         opts.exclude.forEach(pattern => {
-            const adjustedPattern = patternToPathMap.get(pattern) ? patternToPathMap.get(pattern) as string : pattern;
-            updatedExcludes.push(adjustedPattern);
+            const maybePath = patternToPathsMap.get(pattern);
+            const adjustedPatterns = maybePath ? maybePath : [pattern];
+            updatedExcludes.push(...adjustedPatterns);
         });
         opts.exclude = updatedExcludes;
     }
@@ -446,41 +429,38 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
      *
      * Any pattern that resulted in a valid search path will be removed from the 'include' list as it is
      * provided as an equivalent search path instead.
-     *
-     * @param rootPaths - Workspace root paths
-     * @param opts
      */
     protected resolveSearchPathsFromIncludes(rootPaths: string[], opts: SearchInWorkspaceOptions | undefined): string[] {
         if (!opts || !opts.include) {
             return rootPaths;
         }
 
-        const includesAsPaths = this.resolvePatternToPathMap(opts.include, rootPaths);
+        const includesAsPaths = this.resolvePatternToPathsMap(opts.include, rootPaths);
         const patternPaths = Array.from(includesAsPaths.keys());
 
         // Exclude include file patters that were successfully translated to search paths
         opts.include = opts.include.filter(item => !patternPaths.includes(item));
-        return includesAsPaths.size > 0 ? Array.from(includesAsPaths.values()) : rootPaths;
+
+        return includesAsPaths.size > 0 ? [].concat.apply([], Array.from(includesAsPaths.values())) : rootPaths;
     }
 
     /**
      * Attempts to resolve valid file paths from a given list of patterns.
      * The given (e.g. workspace) root paths are used to try resolving relative path patterns to an absolute path.
-     * The resulting map will include all patterns associated to its equivalent file path.
+     * The resulting map will include all patterns associated to its equivalent file paths.
      * The given patterns that are not successfully mapped to a file system path are not included.
-     *
-     * @param rootPaths
-     * @param patterns
      */
-    protected resolvePatternToPathMap(patterns: string[], rootPaths: string[], keepSuffix: boolean = false): Map<string, string> {
-        const patternToPathMap = new Map<string, string>();
+    protected resolvePatternToPathsMap(patterns: string[], rootPaths: string[], keepSuffix: boolean = false): Map<string, string[]> {
+        const patternToPathMap = new Map<string, string[]>();
 
         patterns.forEach(pattern => {
             rootPaths.forEach(root => {
                 const foundPath = findPathInSuffixedPattern(root, pattern, keepSuffix);
 
                 if (foundPath) {
-                    patternToPathMap.set(pattern, foundPath);
+                    let pathArray = patternToPathMap.get(pattern);
+                    pathArray = pathArray ? [...pathArray, foundPath] : [foundPath];
+                    patternToPathMap.set(pattern, pathArray);
                 }
             });
         });
