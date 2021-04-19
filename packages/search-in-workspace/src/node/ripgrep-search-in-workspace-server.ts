@@ -39,22 +39,20 @@ function bytesOrTextToString(obj: IRgBytesOrText): string {
 }
 
 /**
- * Attempts to build an validate an absolute path from a given pattern and a root folder
- * If a first pass is not successful a second pass will consider finding it by removing
- * a glob suffix '/**', if a valid path is successfully built the suffix can be appended
- * back to the result string i.e. depending on the keepSuffix flag.
+ * Attempts to build a valid absolute path from the given pattern and root folder.
+ * - If the first attempt is unsuccessful, retry without the glob suffix `/**`.
+ *
+ * @returns the valid path if found (with the suffix if indicated by @param keepSuffix).
  */
 function findPathInSuffixedPattern(root: string, pattern: string, keepSuffix: boolean): string | undefined {
-    let suffix = undefined;
     let searchPath = findPathInPattern(root, pattern);
 
     if (searchPath) {
         return searchPath;
     }
 
-    // Attempt to find a path in provided pattern but without a glob suffix.
-    let patternBase = undefined;
-    ({ patternBase, suffix } = stripPatternGlobSuffix(pattern));
+    // Retry without the glob suffix.
+    const { patternBase, suffix } = stripGlobSuffix(pattern);
     if (suffix) {
         searchPath = findPathInPattern(root, patternBase);
         searchPath = keepSuffix && searchPath ? searchPath.concat(suffix) : searchPath;
@@ -66,9 +64,12 @@ function findPathInPattern(root: string, pattern: string): string | undefined {
     const searchPath = path.join(root, pattern);
     if (fs.existsSync(searchPath)) {
         return searchPath;
-    } else if (fs.existsSync(pattern)) {
+    }
+
+    if (fs.existsSync(pattern)) {
         return pattern;
     }
+
     return undefined;
 }
 
@@ -76,19 +77,16 @@ function findPathInPattern(root: string, pattern: string): string | undefined {
  * Attempts to translate a pattern string prefixed with glob stars (e.g. /a/b/c/**)
  * to a file system path (/a/b/c).
  *
- * Returns the original pattern if not successful.
- *
- * Returns the pattern with out the glob stars prefix '/**' or without '\\**'
+ * @returns the new pattern without the glob prefix, else returns the original pattern if unsuccessful.
  */
-function stripPatternGlobSuffix(pattern: string): { patternBase: string, suffix: string | undefined } {
-    let patternBase: string = pattern;
-    const globAllSize: number = 3;
+function stripGlobSuffix(pattern: string): { patternBase: string, suffix: string | undefined } {
+    let patternBase = pattern;
+    const globAllSize = 3;
 
-    const suffix: string | undefined = pattern.length > globAllSize
-        ? pattern.substr(pattern.length - globAllSize, globAllSize) : undefined;
+    const suffix = (pattern.length > globAllSize) ? pattern.slice(-globAllSize) : undefined;
 
     if (suffix === '/**' || suffix === '\**') {
-        patternBase = pattern.slice(0, -3);
+        patternBase = pattern.slice(0, -globAllSize);
     }
 
     return { patternBase, suffix };
@@ -151,7 +149,7 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         this.client = client;
     }
 
-    protected getArgs(rootPaths: string[], options?: SearchInWorkspaceOptions): string[] {
+    protected getArgs(options?: SearchInWorkspaceOptions): string[] {
         const args = new Set<string>();
 
         const appendGlobArgs = (rawPatterns: string[], exclude: boolean) => {
@@ -166,7 +164,12 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         args.add('--hidden');
         args.add('--json');
 
-        args.add(options && options.matchCase ? '--case-sensitive' : '--ignore-case');
+        if (options && options.matchCase) {
+            args.add('--case-sensitive');
+        } else {
+            args.add('--ignore-case');
+        }
+
         if (options && options.includeIgnored) {
             args.add('--no-ignore');
         }
@@ -242,7 +245,7 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         const rootPaths = rootUris.map(root => FileUri.fsPath(root));
         const searchPaths: string[] = this.resolveSearchPathsFromIncludes(rootPaths, opts);
         this.adjustExcludePaths(rootPaths, opts);
-        const rgArgs = this.getArgs(searchPaths, opts);
+        const rgArgs = this.getArgs(opts);
         // if we use matchWholeWord we use regExp internally,
         // so, we need to escape regexp characters if we actually not set regexp true in UI.
         if (opts && opts.matchWholeWord && !opts.useRegExp) {
@@ -412,7 +415,7 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         const updatedExcludes: string[] = [];
         opts.exclude.forEach(pattern => {
             const maybePath = patternToPathsMap.get(pattern);
-            const adjustedPatterns = maybePath ? maybePath : [pattern];
+            const adjustedPatterns = maybePath ?? [pattern];
             updatedExcludes.push(...adjustedPatterns);
         });
         opts.exclude = updatedExcludes;
@@ -438,7 +441,7 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         const includesAsPaths = this.resolvePatternToPathsMap(opts.include, rootPaths);
         const patternPaths = Array.from(includesAsPaths.keys());
 
-        // Exclude include file patters that were successfully translated to search paths
+        // Remove file patterns that were successfully translated to search paths.
         opts.include = opts.include.filter(item => !patternPaths.includes(item));
 
         return includesAsPaths.size > 0 ? [].concat.apply([], Array.from(includesAsPaths.values())) : rootPaths;
