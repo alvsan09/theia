@@ -26,6 +26,7 @@ import * as temp from 'temp';
 import * as fs from 'fs';
 import { expect } from 'chai';
 import { rgPath as realRgPath } from 'vscode-ripgrep';
+import { resolveSearchPathsFromIncludes } from './ripgrep-search-paths-resolver';
 
 // Allow creating temporary files, but remove them when we are done.
 const track = temp.track();
@@ -952,8 +953,15 @@ describe('#resolvePatternToPathMap', function (): void {
     this.timeout(10000);
     it('should not resolve paths from a not absolute / relative pattern', function (): void {
         const pattern = 'carrots';
-        const resultMap = ripgrepServer['resolvePatternToPathsMap']([pattern], [rootDirA]);
-        expect(resultMap.size).equal(0);
+        const options = { include: [pattern] };
+        const searchPaths = resolveSearchPathsFromIncludes([rootDirA], options);
+        // Same root directory
+        expect(searchPaths.length).equal(1);
+        expect(searchPaths[0]).equal(rootDirA);
+
+        // Pattern is unchanged
+        expect(options.include.length).equal(1);
+        expect(options.include[0]).equals(pattern);
     });
 
     it('should resolve pattern to path for relative filename', function (): void {
@@ -1051,6 +1059,9 @@ describe('#patternToGlobCLIArguments', function (): void {
 });
 
 function checkResolvedPathForPattern(pattern: string, expectedPath: string): void {
-    const resultMap: Map<string, string[]> = ripgrepServer['resolvePatternToPathsMap']([pattern], [rootDirA]);
-    expect(resultMap.get(pattern)![0]).equal(expectedPath);
+    const options = {include: [pattern]};
+    const searchPaths = resolveSearchPathsFromIncludes([rootDirA], options);
+    expect(searchPaths.length).equal(1);
+    expect(options.include.length).equals(0);
+    expect(searchPaths[0]).equal(expectedPath);
 }
