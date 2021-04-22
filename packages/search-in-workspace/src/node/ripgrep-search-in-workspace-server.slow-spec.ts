@@ -729,6 +729,23 @@ describe('ripgrep-search-in-workspace-server', function (): void {
         });
         ripgrepServer.setClient(client);
         // Matching only the top 'test' folder and not any other 'test' subfolder
+        ripgrepServer.search(pattern, [rootDirAUri], { include: ['./test'], matchWholeWord: true });
+    });
+
+    it('should apply to all sub-folders of not relative pattern', done => {
+        const pattern = 'Copyright';
+
+        const client = new ResultAccumulator(() => {
+            const expected: SearchInWorkspaceExpectation[] = [
+                { root: rootDirAUri, fileUri: 'small/test/test-spec.ts', line: 1, character: 5, length: pattern.length, lineText: '' },
+                { root: rootDirAUri, fileUri: 'test/test-spec.ts', line: 1, character: 5, length: pattern.length, lineText: '' }
+            ];
+
+            compareSearchResults(expected, client.results);
+            done();
+        });
+        ripgrepServer.setClient(client);
+        // Matching only the top 'test' folder and not any other 'test' subfolder
         ripgrepServer.search(pattern, [rootDirAUri], { include: ['test'], matchWholeWord: true });
     });
 
@@ -933,9 +950,10 @@ describe('ripgrep-search-in-workspace-server', function (): void {
 
 describe('#resolvePatternToPathMap', function (): void {
     this.timeout(10000);
-    it('should resolve pattern to path for filename', function (): void {
+    it('should not resolve paths from a not absolute / relative pattern', function (): void {
         const pattern = 'carrots';
-        checkResolvedPathForPattern(pattern, path.join(rootDirA, pattern));
+        const resultMap = ripgrepServer['resolvePatternToPathsMap']([pattern], [rootDirA]);
+        expect(resultMap.size).equal(0);
     });
 
     it('should resolve pattern to path for relative filename', function (): void {

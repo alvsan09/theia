@@ -39,57 +39,74 @@ function bytesOrTextToString(obj: IRgBytesOrText): string {
 }
 
 /**
- * Attempts to build a valid absolute path from the given pattern and root folder.
- * - If the first attempt is unsuccessful, retry without the glob suffix `/**`.
- *
- * @returns the valid path if found (with the suffix if indicated by @param keepSuffix).
+ * Joins the given root and pattern to form an absolute path
+ * as long as the pattern is in relative form e.g. './foo'.
  */
-function findPathInSuffixedPattern(root: string, pattern: string, keepSuffix: boolean): string | undefined {
-    let searchPath = findPathInPattern(root, pattern);
-
-    if (searchPath) {
-        return searchPath;
+function relativeToAbsolutePattern(root: string, pattern: string): string {
+    if (!isRelativeToBaseDirectory(pattern)) {
+        // No need to convert to absolute
+        return pattern;
     }
-
-    // Retry without the glob suffix.
-    const { patternBase, suffix } = stripGlobSuffix(pattern);
-    if (suffix) {
-        searchPath = findPathInPattern(root, patternBase);
-        searchPath = keepSuffix && searchPath ? searchPath.concat(suffix) : searchPath;
-    }
-    return searchPath;
+    return path.join(root, pattern);
 }
 
-function findPathInPattern(root: string, pattern: string): string | undefined {
-    const searchPath = path.join(root, pattern);
-    if (fs.existsSync(searchPath)) {
-        return searchPath;
+function isRelativeToBaseDirectory(filePath: string): boolean {
+    const normalizedPath = filePath.replace(/\\/g, '/');
+    return normalizedPath.startsWith('./');
+}
+
+/**
+ * Attempts to build a valid absolute file or directory from the given pattern and root folder.
+ * e.g. /a/b/c/foo/** to /a/b/c/foo, or './foo/**' to '${root}/foo'.
+ *
+ * @returns the valid path if found existing in the file system.
+ */
+function resolveIncludeFolderFromGlob(root: string, pattern: string): string | undefined {
+    const patternBase = stripGlobSuffix(pattern);
+
+    if (!path.isAbsolute(patternBase) && !isRelativeToBaseDirectory(patternBase)) {
+        // The include pattern is not referring to a single file / folder, i.e. not to be converted
+        // to include folder.
+        return undefined;
     }
 
-    if (fs.existsSync(pattern)) {
-        return pattern;
+    const targetPath = path.isAbsolute(patternBase) ? patternBase : path.join(root, patternBase);
+
+    if (fs.existsSync(targetPath)) {
+        return targetPath;
     }
 
     return undefined;
 }
 
 /**
- * Attempts to translate a pattern string prefixed with glob stars (e.g. /a/b/c/**)
- * to a file system path (/a/b/c).
+ * Removes a glob suffix from a given pattern (e.g. /a/b/c/**)
+ * to a directory path (/a/b/c).
  *
- * @returns the new pattern without the glob prefix, else returns the original pattern if unsuccessful.
+ * @returns the path without the glob suffix,
+ * else returns the original pattern.
  */
-function stripGlobSuffix(pattern: string): { patternBase: string, suffix: string | undefined } {
-    let patternBase = pattern;
-    const globAllSize = 3;
+function stripGlobSuffix(pattern: string): string {
+    const pathParsed = path.parse(pattern);
+    const suffix = pathParsed.base;
 
-    const suffix = (pattern.length > globAllSize) ? pattern.slice(-globAllSize) : undefined;
+    return suffix === '**' ? pathParsed.dir : pattern;
+}
 
-    if (suffix === '/**' || suffix === '\**') {
-        patternBase = pattern.slice(0, -globAllSize);
+/**
+ * Push an item to an existing string array only if the item is not already included.
+ * If the given array is undefined it creates a new one with the given item as the first entry.
+ */
+function pushIfNotIncluded(containerArray: string[] | undefined, item: string): string[] {
+    if (!containerArray) {
+        return [item];
     }
 
-    return { patternBase, suffix };
+    if (!containerArray.includes(item)) {
+        containerArray.push(item);
+    }
+
+    return containerArray;
 }
 
 type IRgMessage = IRgMatch | IRgBegin | IRgEnd;
@@ -244,7 +261,7 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         const searchId = this.nextSearchId++;
         const rootPaths = rootUris.map(root => FileUri.fsPath(root));
         const searchPaths: string[] = this.resolveSearchPathsFromIncludes(rootPaths, opts);
-        this.adjustExcludePaths(rootPaths, opts);
+        this.includesExcludesToAbsolute(searchPaths, opts);
         const rgArgs = this.getArgs(opts);
         // if we use matchWholeWord we use regExp internally,
         // so, we need to escape regexp characters if we actually not set regexp true in UI.
@@ -403,22 +420,25 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
     }
 
     /**
-     * Transform exclude option patterns from relative paths to absolute paths as long
-     * as the resulting paths get validated.
+     * Transform include/exclude option patterns from relative patterns to absolute patterns.
+     * E.g. './abc/foo.*' to '${root}/abc/foo.*', the transformation does not validate the
+     * pattern against the file system as glob suffixes remain.
      */
-    protected adjustExcludePaths(rootPaths: string[], opts: SearchInWorkspaceOptions | undefined): void {
-        if (!opts || !opts.exclude) {
-            return;
-        }
+    protected includesExcludesToAbsolute(searchPaths: string[], opts: SearchInWorkspaceOptions | undefined): void {
+        [true, false].forEach(isInclude => {
+            const patterns = isInclude ? opts?.include : opts?.exclude;
+            if (!patterns) {
+                return;
+            }
 
-        const patternToPathsMap: Map<string, string[]> = this.resolvePatternToPathsMap(opts.exclude, rootPaths, true);
-        const updatedExcludes: string[] = [];
-        opts.exclude.forEach(pattern => {
-            const maybePath = patternToPathsMap.get(pattern);
-            const adjustedPatterns = maybePath ?? [pattern];
-            updatedExcludes.push(...adjustedPatterns);
+            const updatedPatterns = this.replaceRelativePatternsToAbsolute(patterns, searchPaths);
+
+            if (isInclude) {
+                opts!.include = updatedPatterns;
+            } else {
+                opts!.exclude = updatedPatterns;
+            }
         });
-        opts.exclude = updatedExcludes;
     }
 
     /**
@@ -449,26 +469,40 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
 
     /**
      * Attempts to resolve valid file paths from a given list of patterns.
-     * The given (e.g. workspace) root paths are used to try resolving relative path patterns to an absolute path.
+     * The given search paths are used to try resolving relative path patterns to an absolute path.
      * The resulting map will include all patterns associated to its equivalent file paths.
-     * The given patterns that are not successfully mapped to a file system path are not included.
+     * The given patterns that are not successfully mapped to paths are not included.
      */
-    protected resolvePatternToPathsMap(patterns: string[], rootPaths: string[], keepSuffix: boolean = false): Map<string, string[]> {
+    protected resolvePatternToPathsMap(patterns: string[], searchPaths: string[]): Map<string, string[]> {
         const patternToPathMap = new Map<string, string[]>();
 
         patterns.forEach(pattern => {
-            rootPaths.forEach(root => {
-                const foundPath = findPathInSuffixedPattern(root, pattern, keepSuffix);
+            searchPaths.forEach(root => {
+                const foundPath = resolveIncludeFolderFromGlob(root, pattern);
 
                 if (foundPath) {
-                    let pathArray = patternToPathMap.get(pattern);
-                    pathArray = pathArray ? [...pathArray, foundPath] : [foundPath];
-                    patternToPathMap.set(pattern, pathArray);
+                    const pathArray = patternToPathMap.get(pattern);
+                    patternToPathMap.set(pattern, pushIfNotIncluded(pathArray, foundPath));
                 }
             });
         });
 
         return patternToPathMap;
+    }
+
+    /**
+     * Transforms relative patterns to absolute paths, one for each given search path.
+     */
+    protected replaceRelativePatternsToAbsolute(patterns: string[], searchPaths: string[]): string[] {
+        const processedArray: string[] = [];
+
+        patterns.forEach(pattern => {
+            searchPaths.forEach(root => {
+                pushIfNotIncluded(processedArray, relativeToAbsolutePattern(root, pattern));
+            });
+        });
+
+        return processedArray;
     }
 
     /**
