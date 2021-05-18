@@ -23,7 +23,7 @@ import {
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import URI from '@theia/core/lib/common/uri';
 import { FileSearchService, WHITESPACE_QUERY_SEPARATOR } from '../common/file-search-service';
-import { CancellationTokenSource } from '@theia/core/lib/common';
+import { CancellationTokenSource, CommandService } from '@theia/core/lib/common';
 import { LabelProvider } from '@theia/core/lib/browser/label-provider';
 import { Command } from '@theia/core/lib/common';
 import { NavigationLocationService } from '@theia/editor/lib/browser/navigation/navigation-location-service';
@@ -38,9 +38,10 @@ export const quickFileOpen: Command = {
     label: 'Open File...'
 };
 
-export interface FilterAndRange {
+export interface FilterQuery {
     filter: string;
     range: Range;
+    isBySymbol: boolean;
 }
 
 // Supports patterns of <path><#|:><line><#|:|,><col?>
@@ -67,6 +68,8 @@ export class QuickFileOpenService implements QuickOpenModel, QuickOpenHandler {
     protected readonly messageService: MessageService;
     @inject(FileSystemPreferences)
     protected readonly fsPreferences: FileSystemPreferences;
+    @inject(CommandService)
+    protected readonly commandService: CommandService;
 
     /**
      * Whether to hide .gitignored (and other ignored) files.
@@ -78,12 +81,19 @@ export class QuickFileOpenService implements QuickOpenModel, QuickOpenHandler {
      */
     protected isOpen: boolean = false;
 
-    protected filterAndRangeDefault = { filter: '', range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } };
+    protected filterAndRangeDefault = {
+        filter: '',
+        range: {
+            start: { line: 0, character: 0 },
+            end: { line: 0, character: 0 }
+        },
+        isBySymbol: false
+    };
 
     /**
      * Tracks the user file search filter and location range e.g. fileFilter:line:column or fileFilter:line,column
      */
-    protected filterAndRange: FilterAndRange = this.filterAndRangeDefault;
+    protected filterAndRange: FilterQuery = this.filterAndRangeDefault;
 
     /**
      * The score constants when comparing file search results.
@@ -168,7 +178,7 @@ export class QuickFileOpenService implements QuickOpenModel, QuickOpenHandler {
 
         const roots = this.workspaceService.tryGetRoots();
 
-        this.filterAndRange = this.splitFilterAndRange(lookFor);
+        this.filterAndRange = this.extractFilterQuery(lookFor);
         const fileFilter = this.filterAndRange.filter;
 
         const alreadyCollected = new Set<string>();
@@ -184,6 +194,7 @@ export class QuickFileOpenService implements QuickOpenModel, QuickOpenHandler {
             }
         }
         if (fileFilter.length > 0) {
+            let topItem: QuickOpenItem | undefined = undefined;
             const handler = async (results: string[]) => {
                 if (token.isCancellationRequested) {
                     return;
@@ -215,7 +226,11 @@ export class QuickFileOpenService implements QuickOpenModel, QuickOpenHandler {
                     sortedResults.unshift(item);
                 }
                 // Return the recently used items, followed by the search results.
-                acceptor([...recentlyUsedItems, ...sortedResults]);
+                const allItemsSorted = ([...recentlyUsedItems, ...sortedResults]);
+                if (allItemsSorted.length > 0) {
+                    topItem = allItemsSorted[0];
+                }
+                acceptor(allItemsSorted);
             };
 
             this.fileSearchService.find(fileFilter, {
@@ -226,7 +241,16 @@ export class QuickFileOpenService implements QuickOpenModel, QuickOpenHandler {
                 excludePatterns: this.hideIgnoredFiles
                     ? Object.keys(this.fsPreferences['files.exclude'])
                     : undefined,
-            }, token).then(handler);
+            }, token).then(handler).then(async () => {
+                if (topItem && this.filterAndRange.isBySymbol) {
+                    const uri = topItem.getUri();
+                    if (uri) {
+                        await this.openFileAsync(uri);
+                        this.commandService.executeCommand('editor.action.quickOutline');
+                        acceptor([]);
+                    }
+                }
+            });
         } else {
             if (roots.length !== 0) {
                 acceptor(recentlyUsedItems);
@@ -367,6 +391,14 @@ export class QuickFileOpenService implements QuickOpenModel, QuickOpenHandler {
             .catch(error => this.messageService.error(error));
     }
 
+    async openFileAsync(uri: URI): Promise<void> {
+        const options = this.buildOpenerOptions();
+        const resolvedOpener = this.openerService.getOpener(uri, options);
+        resolvedOpener
+            .then(opener => opener.open(uri, options))
+            .catch(error => this.messageService.error(error));
+    }
+
     protected buildOpenerOptions(): EditorOpenerOptions {
         return { selection: this.filterAndRange.range };
     }
@@ -407,17 +439,21 @@ export class QuickFileOpenService implements QuickOpenModel, QuickOpenHandler {
     }
 
     /**
-     * Splits the given expression into a structure of search-file-filter and
-     * location-range.
+     * Extracts the given expression into a structure of search-file-filter,
+     * location-range and symbol-filter.
      *
-     * @param expression patterns of <path><#|:><line><#|:|,><col?>
+     * @param fileExpression patterns of <path><#|:><line><#|:|,><col?>
      */
-    protected splitFilterAndRange(expression: string): FilterAndRange {
+    protected extractFilterQuery(filterExpression: string): FilterQuery {
         let lineNumber = 0;
         let startColumn = 0;
+        
+        const fileAndSymbolExpressions = filterExpression.split('@', 2);
+        let isBySymbol = (fileAndSymbolExpressions.length > 1 );
 
+        const fileExpression = fileAndSymbolExpressions[0];
         // Find line and column number from the expression using RegExp.
-        const patternMatch = LINE_COLON_PATTERN.exec(expression);
+        const patternMatch = LINE_COLON_PATTERN.exec(fileExpression);
 
         if (patternMatch) {
             const line = parseInt(patternMatch[1] ?? '', 10);
@@ -431,10 +467,11 @@ export class QuickFileOpenService implements QuickOpenModel, QuickOpenHandler {
 
         const position = Position.create(lineNumber, startColumn);
         const range = { start: position, end: position };
-        const fileFilter = patternMatch ? expression.substr(0, patternMatch.index) : expression;
+        const fileFilter = patternMatch ? fileExpression.substr(0, patternMatch.index) : fileExpression;
         return {
             filter: fileFilter,
-            range
+            range,
+            isBySymbol
         };
     }
 }
