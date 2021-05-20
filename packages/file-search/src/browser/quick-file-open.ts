@@ -30,7 +30,9 @@ import { NavigationLocationService } from '@theia/editor/lib/browser/navigation/
 import * as fuzzy from '@theia/core/shared/fuzzy';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { FileSystemPreferences } from '@theia/filesystem/lib/browser';
-import { EditorOpenerOptions, Position, Range } from '@theia/editor/lib/browser';
+import { EditorOpenerOptions, EditorWidget, Position, Range } from '@theia/editor/lib/browser';
+import { MonacoEditorModel } from '@theia/monaco/lib/browser/monaco-editor-model';
+import { timeout } from '@theia/core/lib/common/promise-util';
 
 export const quickFileOpen: Command = {
     id: 'file-search.openFile',
@@ -245,9 +247,24 @@ export class QuickFileOpenService implements QuickOpenModel, QuickOpenHandler {
                 if (topItem && this.filterAndRange.isBySymbol) {
                     const uri = topItem.getUri();
                     if (uri) {
-                        await this.openFileAsync(uri);
-                        this.commandService.executeCommand('editor.action.quickOutline');
                         acceptor([]);
+                        const editor = await this.openFileAsync(uri);
+                        if (editor) {
+                            editor.activate();
+                            const timeoutValue = 8000;
+                            const result = await Promise.race([
+                                this.waitForLanguageSymbolRegistry(editor),
+                                timeout(timeoutValue)
+                            ]);
+                            if (result) {
+                                console.log('Opening quick outline');
+                                this.commandService.executeCommand('editor.action.quickOutline');
+                            } else {
+                                console.log(`Language Symbol Registry not ready after ${timeoutValue} ms`);
+                            }
+                        } else {
+                            console.log('no editor returned');
+                        }
                     }
                 }
             });
@@ -391,16 +408,47 @@ export class QuickFileOpenService implements QuickOpenModel, QuickOpenHandler {
             .catch(error => this.messageService.error(error));
     }
 
-    async openFileAsync(uri: URI): Promise<void> {
+    async openFileAsync(uri: URI): Promise<EditorWidget | undefined> {
         const options = this.buildOpenerOptions();
-        const resolvedOpener = this.openerService.getOpener(uri, options);
-        resolvedOpener
-            .then(opener => opener.open(uri, options))
-            .catch(error => this.messageService.error(error));
+        const opener = await this.openerService.getOpener(uri, options);
+        try {
+            console.log(`opening editor: ${uri.toString()}`);
+            return await opener.open(uri, options) as EditorWidget;
+        } catch (e) {
+            this.messageService.error(e);
+        }
     }
 
     protected buildOpenerOptions(): EditorOpenerOptions {
         return { selection: this.filterAndRange.range };
+    }
+
+    protected async waitForLanguageSymbolRegistry(editor: EditorWidget): Promise<boolean> {
+        const document = editor?.editor?.document as MonacoEditorModel;
+
+        let symbolProviderRegistryPromiseResolve: (res: boolean) => void;
+        const symbolProviderRegistryPromise = new Promise<boolean>(resolve => symbolProviderRegistryPromiseResolve = resolve);
+
+        if (document && document.textEditorModel) {
+            const model = document.textEditorModel;
+            if (monaco.modes.DocumentSymbolProviderRegistry.has(model)) {
+                return true;
+            }
+
+            // Resolve promise when registry knows model
+            const symbolProviderListener = monaco.modes.DocumentSymbolProviderRegistry.onDidChange(() => {
+                if (monaco.modes.DocumentSymbolProviderRegistry.has(model)) {
+                    symbolProviderListener.dispose();
+
+                    symbolProviderRegistryPromiseResolve(true);
+                }
+            });
+        }
+
+        // // Resolve promise when we get disposed too
+        // disposables.add(toDisposable(() => symbolProviderRegistryPromiseResolve(false)));
+
+        return symbolProviderRegistryPromise;
     }
 
     private toItem(uriOrString: URI | string, group?: QuickOpenGroupItemOptions): QuickOpenItem<QuickOpenItemOptions> {
@@ -447,9 +495,8 @@ export class QuickFileOpenService implements QuickOpenModel, QuickOpenHandler {
     protected extractFilterQuery(filterExpression: string): FilterQuery {
         let lineNumber = 0;
         let startColumn = 0;
-        
         const fileAndSymbolExpressions = filterExpression.split('@', 2);
-        let isBySymbol = (fileAndSymbolExpressions.length > 1 );
+        const isBySymbol = (fileAndSymbolExpressions.length > 1);
 
         const fileExpression = fileAndSymbolExpressions[0];
         // Find line and column number from the expression using RegExp.
@@ -461,7 +508,7 @@ export class QuickFileOpenService implements QuickOpenModel, QuickOpenHandler {
                 lineNumber = line > 0 ? line - 1 : 0;
 
                 const column = parseInt(patternMatch[2] ?? '', 10);
-                startColumn = Number.isFinite(column) && column > 0 ? column - 1  : 0;
+                startColumn = Number.isFinite(column) && column > 0 ? column - 1 : 0;
             }
         }
 
