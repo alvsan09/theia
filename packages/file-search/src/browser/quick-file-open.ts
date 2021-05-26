@@ -31,7 +31,6 @@ import * as fuzzy from '@theia/core/shared/fuzzy';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { FileSystemPreferences } from '@theia/filesystem/lib/browser';
 import { EditorOpenerOptions, EditorWidget, Position, Range } from '@theia/editor/lib/browser';
-import { MonacoEditorModel } from '@theia/monaco/lib/browser/monaco-editor-model';
 import { timeout } from '@theia/core/lib/common/promise-util';
 
 export const quickFileOpen: Command = {
@@ -424,35 +423,13 @@ export class QuickFileOpenService implements QuickOpenModel, QuickOpenHandler {
     }
 
     protected async waitForLanguageSymbolRegistry(editor: EditorWidget): Promise<boolean> {
-        const document = editor?.editor?.document as MonacoEditorModel;
-
-        let symbolProviderRegistryPromiseResolve: (res: boolean) => void;
-        const symbolProviderRegistryPromise = new Promise<boolean>(resolve => symbolProviderRegistryPromiseResolve = resolve);
-
-        if (document && document.textEditorModel) {
-            const model = document.textEditorModel;
-            if (monaco.modes.DocumentSymbolProviderRegistry.has(model)) {
-                return true;
-            }
-
-            // Resolve promise when registry knows model
-            const symbolProviderListener = monaco.modes.DocumentSymbolProviderRegistry.onDidChange(() => {
-                if (monaco.modes.DocumentSymbolProviderRegistry.has(model)) {
-                    symbolProviderListener.dispose();
-
-                    symbolProviderRegistryPromiseResolve(true);
-                }
-            });
-        }
-
-        // // Resolve promise when we get disposed too
-        // disposables.add(toDisposable(() => symbolProviderRegistryPromiseResolve(false)));
-
-        return symbolProviderRegistryPromise;
+        const document = editor?.editor?.document;
+        return await document.waitForLanguageSymbolRegistry();
     }
 
     private toItem(uriOrString: URI | string, group?: QuickOpenGroupItemOptions): QuickOpenItem<QuickOpenItemOptions> {
         const uri = uriOrString instanceof URI ? uriOrString : new URI(uriOrString);
+        console.log('=====> toItem uri: ' + uri.toString());
         let description = this.labelProvider.getLongName(uri.parent);
         if (this.workspaceService.isMultiRootWorkspaceOpened) {
             const rootUri = this.workspaceService.getWorkspaceRootUri(uri);

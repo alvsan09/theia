@@ -23,9 +23,6 @@
     },
     {
       "path": "../workspace/compile.tsconfig.json"
-    },
-    {
-      "path": "../monaco/compile.tsconfig.json"
     }
   ]
 }

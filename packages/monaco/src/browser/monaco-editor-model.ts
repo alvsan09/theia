@@ -313,6 +313,33 @@ export class MonacoEditorModel implements ITextEditorModel, TextEditorDocument {
         return extractedMatches;
     }
 
+    async waitForLanguageSymbolRegistry(): Promise<boolean> {
+
+        let symbolProviderRegistryPromiseResolve: (res: boolean) => void;
+        const symbolProviderRegistryPromise = new Promise<boolean>(resolve => symbolProviderRegistryPromiseResolve = resolve);
+
+        if (this.textEditorModel) {
+            const model = this.textEditorModel;
+            if (monaco.modes.DocumentSymbolProviderRegistry.has(model)) {
+                return true;
+            }
+
+            // Resolve promise when registry knows model
+            const symbolProviderListener = monaco.modes.DocumentSymbolProviderRegistry.onDidChange(() => {
+                if (monaco.modes.DocumentSymbolProviderRegistry.has(model)) {
+                    symbolProviderListener.dispose();
+
+                    symbolProviderRegistryPromiseResolve(true);
+                }
+            });
+        }
+
+        // // Resolve promise when we get disposed too
+        // disposables.add(toDisposable(() => symbolProviderRegistryPromiseResolve(false)));
+
+        return symbolProviderRegistryPromise;
+    }
+
     async load(): Promise<MonacoEditorModel> {
         await this.resolveModel;
         return this;

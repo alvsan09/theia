@@ -36,6 +36,11 @@ export interface TextEditorDocument extends lsp.TextDocument, Saveable, Disposab
      * @since 1.8.0
      */
     findMatches?(options: FindMatchesOptions): FindMatch[];
+
+    /**
+     * @since 1.14.0
+     */
+    waitForLanguageSymbolRegistry(): Promise<boolean>;
 }
 
 // Refactoring
